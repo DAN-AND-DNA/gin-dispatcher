@@ -3,13 +3,10 @@ package server
 import (
 	"context"
 	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
-	jsoniter "github.com/json-iterator/go"
 	"net/http"
 	"reflect"
 	"sync"
 	"sync/atomic"
-	"unsafe"
 )
 
 type Messages struct {
@@ -17,10 +14,9 @@ type Messages struct {
 
 	requestCache  map[string]*sync.Pool // 请求cache
 	responseCache map[string]*sync.Pool // 响应cache
-	validate      *validator.Validate
 
 	MessageId   func(*gin.Context) string
-	Payload     func(*gin.Context) string
+	ShouldBind  func(*gin.Context, any) error
 	HandleError func(*gin.Context, error)
 }
 
@@ -30,15 +26,21 @@ func NewMessages() *Messages {
 	httpServer.handlers.Store(map[string]reflect.Value{})
 	httpServer.requestCache = make(map[string]*sync.Pool)
 	httpServer.responseCache = make(map[string]*sync.Pool)
-	httpServer.validate = validator.New()
 
 	// default
 	httpServer.MessageId = func(c *gin.Context) string {
 		return c.PostForm("id")
 	}
-	httpServer.Payload = func(c *gin.Context) string {
-		return c.PostForm("payload")
+
+	httpServer.ShouldBind = func(c *gin.Context, in any) error {
+		err := c.ShouldBindJSON(in)
+		if err != nil {
+			return err
+		}
+
+		return nil
 	}
+
 	httpServer.HandleError = func(c *gin.Context, err error) {
 		c.String(http.StatusInternalServerError, err.Error())
 	}
@@ -113,13 +115,12 @@ func (messages *Messages) Register(messageId string, handler any) {
 
 func GinDispatcher(messages *Messages) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if messages.MessageId == nil || messages.Payload == nil {
+		if messages.MessageId == nil || messages.ShouldBind == nil {
 			c.Abort()
 			return
 		}
 
 		messageId := messages.MessageId(c)
-		payload := messages.Payload(c)
 
 		requestCachePool, ok := messages.requestCache[messageId]
 		if !ok {
@@ -147,26 +148,7 @@ func GinDispatcher(messages *Messages) gin.HandlerFunc {
 			responseCachePool.Put(response)
 		}()
 
-		newMsg := request.Interface()
-		// string强转[]byte，不走分配 (只读)
-		//	1.20  以下版本
-		if payload != "" {
-			str := (*reflect.StringHeader)(unsafe.Pointer(&payload))
-			ret := reflect.SliceHeader{Data: str.Data, Len: str.Len, Cap: str.Len}
-			bytesPayload := *(*[]byte)(unsafe.Pointer(&ret))
-			// 1.20 支持
-			//bytesPayload := unsafe.Slice(unsafe.StringData(strMsg), len(strMsg))
-
-			// 解析json
-			err := jsoniter.Unmarshal(bytesPayload, newMsg)
-			if err != nil {
-				messages.HandleError(c, err)
-				return
-			}
-		}
-
-		// 检查参数合法性
-		err := messages.validate.Struct(newMsg)
+		err := messages.ShouldBind(c, request.Interface())
 		if err != nil {
 			messages.HandleError(c, err)
 			return
