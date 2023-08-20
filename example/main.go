@@ -2,59 +2,70 @@ package main
 
 import (
 	"context"
+	"fmt"
 	ginDispatcher "github.com/dan-and-dna/gin-dispatcher"
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"log"
+	"net/http"
 )
 
 type EchoRequest struct {
-	Message string `json:"message"`
-	Id      int    `json:"-"`
+	Message string `json:"message" form:"message" binding:"required"`
 }
 
 type EchoResponse struct {
 	Message string `json:"message"`
-	Name    string `json:"name"`
-	Age     int    `json:"-"`
 }
 
 func main() {
 	r := gin.Default()
 
-	messages := ginDispatcher.NewMessages()
-	/*
-		messages.MessageId = func(c *gin.Context) string {
-			return c.PostForm("id")
-		}
-		messages.Payload = func(c *gin.Context) string {
-			return c.PostForm("msg")
-		}
-		messages.HandleError = func(c *gin.Context, err error) {
-			if _, ok := err.(*validator.InvalidValidationError); ok {
-				fmt.Println(err)
-			}
+	messages := ginDispatcher.NewMessages(
+		plugin("hello"),
+		plugin("world"),
+	)
 
-			for _, err := range err.(validator.ValidationErrors) {
-				fmt.Println(err.StructNamespace(), err.Field())
-			}
-
-			c.JSON(http.StatusOK, gin.H{"code": -1, "error": err.Error()})
+	messages.MessageId = func(c *gin.Context) string {
+		module := c.Param("module")
+		message := c.Param("message")
+		return fmt.Sprintf("%s::%s", module, message)
+	}
+	messages.ShouldBind = func(c *gin.Context, req any) error {
+		return c.ShouldBind(req)
+	}
+	messages.HandleError = func(c *gin.Context, err error) {
+		if _, ok := err.(validator.ValidationErrors); ok {
+			c.JSON(http.StatusOK, gin.H{"code": -1, "error": "invalid args"})
+			return
 		}
-	*/
-	messages.Register("30001", func(c context.Context, req *EchoRequest, resp *EchoResponse) error {
-		log.Println(req)
-		log.Println(resp)
 
-		req.Id = 37
+		c.JSON(http.StatusOK, gin.H{"code": -1, "error": err.Error()})
+	}
+
+	messages.Register("test::echo", func(c context.Context, req *EchoRequest, resp *EchoResponse) error {
+		log.Println("echo")
 		resp.Message = req.Message
-		resp.Age = 111
-		resp.Name = "dddd"
 		return nil
 	})
 
-	// r.Use(ginDispatcher.GinDispatcher(messages))
-	// or
-	r.GET("/dmm", ginDispatcher.GinDispatcher(messages))
+	r.POST("/:module/:message", ginDispatcher.GinDispatcher(messages))
 
-	r.Run()
+	// curl http://127.0.0.1:8080/test/echo?message=你好 hello
+	r.GET("/:module/:message", ginDispatcher.GinDispatcher(messages))
+
+	log.Fatalln(r.Run())
+}
+
+func plugin(newMessage string) ginDispatcher.Plugin {
+	return func(next ginDispatcher.Handler) ginDispatcher.Handler {
+		return func(ctx context.Context, request any, response any) error {
+			log.Println("start")
+			defer log.Println("end")
+			r := request.(*EchoRequest)
+			log.Println(r.Message)
+			r.Message = newMessage
+			return next(ctx, request, response)
+		}
+	}
 }

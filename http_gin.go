@@ -18,9 +18,11 @@ type Messages struct {
 	MessageId   func(*gin.Context) string
 	ShouldBind  func(*gin.Context, any) error
 	HandleError func(*gin.Context, error)
+
+	plugins []Plugin // 插件
 }
 
-func NewMessages() *Messages {
+func NewMessages(plugins ...Plugin) *Messages {
 	httpServer := &Messages{}
 
 	httpServer.handlers.Store(map[string]reflect.Value{})
@@ -29,7 +31,7 @@ func NewMessages() *Messages {
 
 	// default
 	httpServer.MessageId = func(c *gin.Context) string {
-		return c.PostForm("id")
+		return c.Param("message")
 	}
 
 	httpServer.ShouldBind = func(c *gin.Context, in any) error {
@@ -44,6 +46,8 @@ func NewMessages() *Messages {
 	httpServer.HandleError = func(c *gin.Context, err error) {
 		c.String(http.StatusInternalServerError, err.Error())
 	}
+
+	httpServer.plugins = append(httpServer.plugins, plugins...)
 
 	return httpServer
 }
@@ -163,14 +167,19 @@ func GinDispatcher(messages *Messages) gin.HandlerFunc {
 		}
 
 		// 调用函数
-		ins := []reflect.Value{reflect.ValueOf(c), request, response}
-		outs := handler.Call(ins)
-		out := outs[0].Interface()
-		if out != nil {
-			err = out.(error)
-		}
+		withPlugins := Chain(NopPlugin(), messages.plugins...)(
+			func(context.Context, any, any) error {
+				ins := []reflect.Value{reflect.ValueOf(c), request, response}
+				outs := handler.Call(ins)
+				out := outs[0].Interface()
+				if out != nil {
+					err, _ = out.(error)
+					return err
+				}
+				return nil
+			})
 
-		if err != nil {
+		if err := withPlugins(c, request.Interface(), response.Interface()); err != nil {
 			messages.HandleError(c, err)
 			return
 		}
