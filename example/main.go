@@ -21,10 +21,7 @@ type EchoResponse struct {
 func main() {
 	r := gin.Default()
 
-	messages := ginDispatcher.NewMessages(
-		plugin("hello"),
-		plugin("world"),
-	)
+	messages := ginDispatcher.NewMessages()
 
 	messages.MessageId = func(c *gin.Context) string {
 		module := c.Param("module")
@@ -48,6 +45,11 @@ func main() {
 		resp.Message = req.Message
 		return nil
 	})
+
+	messages.SetPlugins(
+		plugin("hello"),
+		plugin("world"),
+	)
 
 	r.POST("/:module/:message", ginDispatcher.GinDispatcher(messages))
 

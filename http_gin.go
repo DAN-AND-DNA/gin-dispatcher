@@ -117,6 +117,11 @@ func (messages *Messages) Register(messageId string, handler any) {
 	messages.handlers.Store(newCallbacks)
 }
 
+func (messages *Messages) SetPlugins(plugins ...Plugin) {
+	messages.plugins = nil
+	messages.plugins = append(messages.plugins, plugins...)
+}
+
 func GinDispatcher(messages *Messages) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if messages.MessageId == nil || messages.ShouldBind == nil {
